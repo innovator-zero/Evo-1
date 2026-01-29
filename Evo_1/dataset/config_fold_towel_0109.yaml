@@ -1,0 +1,13 @@
+# do not change max_action_dim, max_state_dim, max_views
+max_action_dim: 24
+max_state_dim: 24
+max_views: 3
+
+data_groups:
+  agilex:
+    fold_towel_0109:
+      path: /mnt/luyuxiang/data/lerobot/test/fold_towel_0109
+      view_map:
+        image_1: observation.images.cam_high
+        image_2: observation.images.cam_left_wrist
+        image_3: observation.images.cam_right_wrist

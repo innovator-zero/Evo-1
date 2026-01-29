@@ -171,7 +171,7 @@ class LeRobotDataset(Dataset):
 
 
         if cache_dir is None:
-            self.cache_dir = Path("/home/dell/code/lintao/Evo_1/training_data_cache/")
+            self.cache_dir = Path("/tmp/training_data_cache/")
         else:
             self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -447,6 +447,7 @@ class LeRobotDataset(Dataset):
            
             if len(images) == 0:
                 dummy_image = torch.zeros(3, 448, 448)
+                logging.info(item["video_paths"])
                 logging.info("Warning: Image list is empty, using zero tensor for padding")
             else:
                 dummy_image = torch.zeros_like(images[0]) 

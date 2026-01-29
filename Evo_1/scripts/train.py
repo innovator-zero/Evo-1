@@ -198,20 +198,20 @@ def log_training_step(step, loss, total_norm, clipped_norm, scheduler, dataloade
     if accelerator is None or accelerator.is_main_process:
         logging.info(f"Estimated Epoch: {current_epoch:.2f}")
         logging.info(f"[Step {step}] Loss: {loss.item():.4f}")
-        wandb.log({
-            "step": step,
-            "loss": loss.item(),
-            "current_epoch": current_epoch,
-            "learning_rate": scheduler.get_last_lr()[0],
+        # wandb.log({
+        #     "step": step,
+        #     "loss": loss.item(),
+        #     "current_epoch": current_epoch,
+        #     "learning_rate": scheduler.get_last_lr()[0],
             
-        })
-        swanlab.log({
-            "step": step,
-            "loss": loss.item(),
-            "current_epoch": current_epoch,
-            "learning_rate": scheduler.get_last_lr()[0],
+        # })
+        # swanlab.log({
+        #     "step": step,
+        #     "loss": loss.item(),
+        #     "current_epoch": current_epoch,
+        #     "learning_rate": scheduler.get_last_lr()[0],
     
-        })
+        # })
 
 def save_checkpoint(save_dir, step, model_engine, loss, accelerator, config=None, norm_stats=None):
     tag = f"step_{step}"
@@ -333,8 +333,8 @@ def train(config):
     log_path = setup_logging(save_dir)
     
     # === WandB and Swanlab ===
-    init_wandb(config, accelerator)
-    init_swanlab(config, accelerator)
+    # init_wandb(config, accelerator)
+    # init_swanlab(config, accelerator)
 
     # === Debug mode ===
     if get_with_warning(config, "debug", False):
