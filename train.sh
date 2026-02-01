@@ -4,7 +4,7 @@ NPROC_PER_NODE=${SENSECORE_ACCELERATE_DEVICE_COUNT:-1}
 
 conda activate evo1
 
-export HF_HOME="/mnt/luyuxiang/hf"
+export HF_HOME="/mnt/hf"
 export HF_ENDPOINT="https://hf-mirror.com"
 
 cd Evo_1/
@@ -13,6 +13,7 @@ dataset=$1
 
 accelerate launch \
     --num_processes $NPROC_PER_NODE \
+    --use_deepspeed \
     --deepspeed_config_file ds_config.json \
     scripts/train.py \
     --run_name Evo1_${dataset}_stage1 \
@@ -32,6 +33,7 @@ accelerate launch \
 
 accelerate launch \
     --num_processes $NPROC_PER_NODE \
+    --use_deepspeed \
     --deepspeed_config_file ds_config.json \
     scripts/train.py \
     --run_name Evo1_${dataset}_stage2 \
