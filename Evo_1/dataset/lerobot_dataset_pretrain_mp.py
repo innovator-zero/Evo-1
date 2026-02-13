@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 from pathlib import Path
-from tqdm.auto import tqdm  
+from tqdm.auto import tqdm
 from typing import List, Union, Dict, Any
 from torch.utils.data import Dataset
 import torchvision.transforms as T
@@ -22,6 +22,18 @@ import pickle
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+STATE_KEYS = [
+    "state.ee_pos",
+    "state.ee_rot",
+    "state.gripper",
+]
+
+ACTION_KEYS = [
+    "action.delta_ee_pos",
+    "action.delta_ee_rot",
+    "action.gripper",
+]
+
 def compute_lerobot_normalization_stats_from_minmax(jsonl_path):
     state_mins, state_maxs = [], []
     action_mins, action_maxs = [], []
@@ -31,10 +43,31 @@ def compute_lerobot_normalization_stats_from_minmax(jsonl_path):
             obj = json.loads(line)
             stats = obj.get("stats", {})
             try:
-                state_mins.append(stats["observation.state"]["min"])
-                state_maxs.append(stats["observation.state"]["max"])
-                action_mins.append(stats["action"]["min"])
-                action_maxs.append(stats["action"]["max"])
+                curr_state_min = []
+                curr_state_max = []
+                for key in STATE_KEYS:
+                    # Handle cases where keys might be nested or flat in stats
+                    if key in stats:
+                        curr_state_min.extend(stats[key]["min"])
+                        curr_state_max.extend(stats[key]["max"])
+                    else:
+                        logging.warning(f"Key {key} not found in stats line.")
+                
+                curr_action_min = []
+                curr_action_max = []
+                for key in ACTION_KEYS:
+                    if key in stats:
+                        curr_action_min.extend(stats[key]["min"])
+                        curr_action_max.extend(stats[key]["max"])
+                    else:
+                        logging.warning(f"Key {key} not found in stats line.")
+
+                if curr_state_min and curr_action_min:
+                    state_mins.append(curr_state_min)
+                    state_maxs.append(curr_state_max)
+                    action_mins.append(curr_action_min)
+                    action_maxs.append(curr_action_max)
+                
             except Exception as e:
                 print(f"skipping abnormal line: {e}")
 
@@ -77,23 +110,40 @@ def _process_parquet_file_worker(args):
 
         df = pd.read_parquet(parquet_path)
 
+        # Extract all state columns and concatenate them along axis 1
+        try:
+            state_arrays = [np.vstack(df[key].values) for key in STATE_KEYS]
+            merged_state = np.concatenate(state_arrays, axis=1) # Shape: (N_rows, State_Dim)
+        except KeyError as e:
+            return [], f"Missing state column in parquet: {e}"
+
+        try:
+            action_arrays = [np.vstack(df[key].values) for key in ACTION_KEYS]
+            merged_action = np.concatenate(action_arrays, axis=1) # Shape: (N_rows, Action_Dim)
+        except KeyError as e:
+             return [], f"Missing action column in parquet: {e}"
+
         last_row = df.iloc[-1:]  
         padding_rows = pd.concat([last_row] * action_horizon, ignore_index=True)
+        # pad numpy arrays
+        merged_state = np.concatenate([merged_state, np.tile(merged_state[-1:], (action_horizon, 1))], axis=0)
+        merged_action = np.concatenate([merged_action, np.tile(merged_action[-1:], (action_horizon, 1))], axis=0)
+        
         df = pd.concat([df, padding_rows], ignore_index=True)
 
         if max_samples_per_file is not None:
             df = df.head(max_samples_per_file)
+            merged_state = merged_state[:max_samples_per_file + action_horizon]
+            merged_action = merged_action[:max_samples_per_file + action_horizon]
 
         episode_files = []
         for i in range(len(df) - action_horizon + 1): 
             start_idx = i
             end_idx = i + action_horizon
             
-      
             cache_subdir = cache_dir / arm_name / dataset_name / parquet_path.parent.name / parquet_path.stem
             cache_filename = f"{start_idx}_{end_idx}.pkl"
             cache_filepath = cache_subdir / cache_filename
-            
             
             if cache_filepath.exists():
                 episode_files.append(str(cache_filepath))
@@ -112,7 +162,6 @@ def _process_parquet_file_worker(args):
                 else:
                     logging.warning(f"missing video file: {full_path}")
             
-            
             task_index = sub_df.iloc[0].get("task_index", None)
             if task_index is not None and task_index in task_mapping:
                 prompt = task_mapping[task_index]
@@ -120,12 +169,17 @@ def _process_parquet_file_worker(args):
                 logging.info(f"cannot find task description from task_index={task_index}")
                 prompt = ""
 
+            # Get pre-merged state (only first frame of the chunk/horizon usually used as 'current state')
+            current_state = merged_state[i] 
+            # Get pre-merged actions (the whole horizon)
+            current_actions = merged_action[i : i + action_horizon]
+
             episode = {
                 "arm_key": arm_name,
                 "dataset_key": dataset_name,
                 "prompt": prompt,
-                "state": sub_df.iloc[0].get("observation.state", None),
-                "action": [row["action"] for _, row in sub_df.iterrows()],
+                "state": current_state,
+                "action": current_actions,
                 "video_paths": video_paths,
                 "timestamp": sub_df.iloc[0].get("timestamp", None),
             }
@@ -148,7 +202,7 @@ class LeRobotDataset(Dataset):
         config: Dict[str, Any],
         image_size: int = 448,
         max_samples_per_file: Union[int, None] = None,
-        video_backend: str = "av", # TODO: 
+        video_backend: str = "av", 
         action_horizon: int = 50,
         video_backend_kwargs: Dict[str, Any] = None,
         binarize_gripper: bool = False,
@@ -201,7 +255,6 @@ class LeRobotDataset(Dataset):
         ])
 
     def _load_metadata(self):
-     
         self.episodes = []
         self.tasks = {}
         norm_stats_list = []
@@ -234,13 +287,31 @@ class LeRobotDataset(Dataset):
                 if episodes_path.exists():
                     self.episodes += pd.read_json(episodes_path, lines=True).to_dict("records")
 
-     
                 stats_path = dataset_path / "meta" / "episodes_stats.jsonl"
                 stats_path_after_compute = dataset_path / "meta" / "stats.json"
                 if stats_path_after_compute.exists():
                     print(f"already have stats file: {stats_path_after_compute}")
                     with open(stats_path_after_compute, "r") as f:
-                        stats = json.load(f)
+                        raw_stats = json.load(f)
+                        
+                    if "observation.state" not in raw_stats:
+                        state_min, state_max = [], []
+                        for k in STATE_KEYS:
+                            state_min.extend(raw_stats[k]["min"])
+                            state_max.extend(raw_stats[k]["max"])
+                            
+                        action_min, action_max = [], []
+                        for k in ACTION_KEYS:
+                            action_min.extend(raw_stats[k]["min"])
+                            action_max.extend(raw_stats[k]["max"])
+                            
+                        stats = {
+                            "observation.state": {"min": state_min, "max": state_max},
+                            "action": {"min": action_min, "max": action_max}
+                        }
+                    else:
+                        stats = raw_stats
+                    
                     norm_arm_list.append(stats)
                 elif stats_path.exists():
                     stats = compute_lerobot_normalization_stats_from_minmax(stats_path)
@@ -253,14 +324,10 @@ class LeRobotDataset(Dataset):
                 else:
                     raise FileNotFoundError(f"normalization stats file not found: {stats_path}")
             
-
             self.arm2stats_dict[arm_name] = merge_lerobot_stats(norm_arm_list)
 
 
     def _load_trajectories(self):
-
-        
-
         parquet_process_units = []
         for arm_name, arm_config in self.config['data_groups'].items():
             for dataset_name, dataset_config in arm_config.items():
@@ -285,17 +352,12 @@ class LeRobotDataset(Dataset):
                         self.cache_dir  
                     ))
 
-       
         print(f"total {len(parquet_process_units)} parquet files to process")
         
-   
         num_processes = min(16, len(parquet_process_units))
-
         print(f"Using {num_processes} processes for concurrent processing")
         
- 
         with mp.Pool(processes=num_processes) as pool:
-            
             total_episodes = 0
             with tqdm(total=len(parquet_process_units), desc="Processing Parquet files to cache") as pbar:
                 for episode_files, error in pool.imap_unordered(_process_parquet_file_worker, parquet_process_units):
@@ -366,7 +428,6 @@ class LeRobotDataset(Dataset):
                     logging.info(f"Reading video {path} frame index: {frame_idx} (timestamp: {timestamp}, fps: {fps})")
                     if frame_idx >= len(vr):
                         logging.info(f"the requested frame index exceeds video length: frame_idx={frame_idx}, len={len(vr)}. Using last frame instead.")
-                        
                         frame_idx = len(vr) - 1
 
                     frame = vr[frame_idx].asnumpy()
@@ -408,43 +469,33 @@ class LeRobotDataset(Dataset):
                 item = pickle.load(f)
         except Exception as e:
             logging.info(f"cannot load cache file {cache_filepath}: {str(e)}")
-            
             return self[random.randint(0, len(self.data)-1)]
  
-        
         arm_key = item["arm_key"]
         dataset_key = item["dataset_key"]
         embodiment_id = self.arm_to_embodiment_id[arm_key]
 
- 
         try:
             frames = self._load_video_frame(item["video_paths"], item["timestamp"])
         except Exception as e:
-      
             logging.info(f"skipping sample that cannot decode video {self.data[idx]}: {e}")
             return self[random.randint(0, len(self.data)-1)]  
 
         images = frames
 
-
         if self.use_augmentation:
-           
             images = [
                 self.aug_transform(img) if random.random() < 0.5 else self.basic_transform(img)
                 for img in images
             ]
         else:
-         
             images = [self.basic_transform(img) for img in images]
 
- 
         num_real_views = len(images)
         image_mask = torch.zeros(self.max_views, dtype=torch.bool)
         image_mask[:num_real_views] = True 
 
-
         while len(images) < self.max_views:
-           
             if len(images) == 0:
                 dummy_image = torch.zeros(3, 448, 448)
                 logging.info(item["video_paths"])
@@ -455,19 +506,13 @@ class LeRobotDataset(Dataset):
 
         images = torch.stack(images)
 
-
         if item["state"] is None:
             raise ValueError("missing observation.state, please check data integrity")
         
-    
-
         try:
             norm_stats = self.arm2stats_dict[arm_key]
         except KeyError:
-        
             raise KeyError(f"Normalization stats not found for arm_key={arm_key} and dataset_key={dataset_key}")
-
-        
 
         state = torch.tensor(item["state"], dtype=torch.float32)
         device = state.device
@@ -481,12 +526,10 @@ class LeRobotDataset(Dataset):
             state, self.max_state_dim
         )
 
-
         if item["action"] is None:
             raise ValueError("missing action, please check data integrity")
 
-  
-        action = torch.from_numpy(np.stack(item["action"])).float()
+        action = torch.from_numpy(item["action"]).float()
         device = action.device
         action_min = torch.tensor(norm_stats["action"]["min"], dtype=torch.float32, device=device)
         action_max = torch.tensor(norm_stats["action"]["max"], dtype=torch.float32, device=device)
