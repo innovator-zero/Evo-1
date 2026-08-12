@@ -8,6 +8,7 @@ seed=${4:-0}
 gpu_id=${5:-0}
 server_url=${6:-ws://0.0.0.0:9000}
 horizon=${7:-37}
+dataset_key_suffix=${8:-}
 
 export CUDA_VISIBLE_DEVICES=${gpu_id}
 echo -e "\033[33mgpu id (to use): ${gpu_id}\033[0m"
@@ -23,4 +24,5 @@ stdbuf -oL python -u script/eval_policy.py --config policy/$policy_name/deploy_p
     --seed ${seed} \
     --policy_name ${policy_name} \
     --server_url ${server_url} \
-    --horizon ${horizon}
+    --horizon ${horizon} \
+    ${dataset_key_suffix:+--dataset_key_suffix ${dataset_key_suffix}}

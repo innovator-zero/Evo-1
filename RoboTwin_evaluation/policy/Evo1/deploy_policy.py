@@ -56,11 +56,11 @@ def smooth_actions(actions, kernel_size=9, smooth_type="gaussian"):
 
 
 class Evo1Proxy:
-    def __init__(self, server_url, horizon, task_name):
+    def __init__(self, server_url, horizon, task_name, dataset_key_suffix=""):
         self.server_url = server_url
         self.horizon = horizon
         self.task_name = task_name
-        self.dataset_key = f"robotwin_{task_name}"
+        self.dataset_key = f"robotwin_{task_name}{dataset_key_suffix}"
         self.arm_key = "aloha_joint"
         self.ws = None
         self.loop = asyncio.new_event_loop()
@@ -102,12 +102,28 @@ class Evo1Proxy:
             self.loop.run_until_complete(self.ws.close())
 
 
+def _resolve_dataset_key_suffix(usr_args):
+    # "" -> robotwin_<task> (checkpoints with unsuffixed norm_stats keys, e.g. Evo1_RoboTwin).
+    # "auto" -> _clean / _rand from task_config (checkpoints trained on
+    # StarVLA/RoboTwin-Randomized, whose norm_stats are keyed per task AND per setting).
+    suffix = usr_args.get("dataset_key_suffix") or ""
+    if suffix != "auto":
+        return suffix
+    task_config = str(usr_args.get("task_config") or "")
+    if "randomized" in task_config:
+        return "_rand"
+    if "clean" in task_config:
+        return "_clean"
+    return ""
+
+
 def get_model(usr_args):
     server_url = usr_args.get("server_url", "ws://0.0.0.0:9000")
     horizon = int(usr_args.get("horizon", 37))
     task_name = usr_args["task_name"]
 
-    proxy = Evo1Proxy(server_url, horizon, task_name)
+    proxy = Evo1Proxy(server_url, horizon, task_name,
+                      dataset_key_suffix=_resolve_dataset_key_suffix(usr_args))
     proxy.connect()
     return proxy
 
