@@ -103,7 +103,7 @@ class Evo1Proxy:
 
 
 def _resolve_dataset_key_suffix(usr_args):
-    # "" -> robotwin_<task> (checkpoints with unsuffixed norm_stats keys, e.g. Evo1_RoboTwin).
+    # "" -> robotwin_<task> (checkpoints with unsuffixed norm_stats keys, e.g. Evo1_RoboTwin2_clean).
     # "auto" -> _clean / _rand from task_config (checkpoints trained on
     # StarVLA/RoboTwin-Randomized, whose norm_stats are keyed per task AND per setting).
     suffix = usr_args.get("dataset_key_suffix") or ""

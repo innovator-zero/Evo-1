@@ -43,7 +43,8 @@ The policy is served with:
 A **single multi-task policy trained on clean data only** — 50 RoboTwin tasks,
 **50 `demo_clean` demonstrations per task** (no randomized / augmented data). At **test time**
 each task is rolled out **100 times per setting** (50 tasks × 100 = 5000 evaluation episodes
-per setting), `horizon=37`, using the released `MINT-SJTU/Evo1_RoboTwin` checkpoint.
+per setting), `horizon=37`, using the released
+[`MINT-SJTU/Evo1_RoboTwin2_clean`](https://huggingface.co/MINT-SJTU/Evo1_RoboTwin2_clean) checkpoint.
 
 | Setting | Overall success rate |
 |---|---|

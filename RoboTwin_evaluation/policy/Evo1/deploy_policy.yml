@@ -6,6 +6,6 @@ seed: null
 instruction_type: unseen
 server_url: "ws://0.0.0.0:9000"
 horizon: 37
-# "" = dataset_key robotwin_<task> (Evo1_RoboTwin); "auto" = append _clean/_rand from
+# "" = dataset_key robotwin_<task> (Evo1_RoboTwin2_clean); "auto" = append _clean/_rand from
 # task_config (checkpoints trained on StarVLA/RoboTwin-Randomized, 100-key norm_stats)
 dataset_key_suffix: ""

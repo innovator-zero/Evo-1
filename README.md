@@ -276,7 +276,7 @@ cd curobo && python -m pip install -e . --no-build-isolation && cd ../..
 ##### 📥 2.1 Download Model Weight
 
 ```bash
-hf download MINT-SJTU/Evo1_RoboTwin --local-dir /path/to/save/checkpoint/
+hf download MINT-SJTU/Evo1_RoboTwin2_clean --local-dir /path/to/save/checkpoint/
 ```
 
 ##### ✏️ 2.2 Modify config
