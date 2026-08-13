@@ -254,22 +254,27 @@ RoboTwin (50 bimanual manipulation tasks in SAPIEN) uses a **policy-plugin** arc
 
 #### 1️⃣ Prepare the environment for RoboTwin
 
-RoboTwin is **not** bundled in this repo. Clone and install it separately (SAPIEN + CuRobo are required):
+RoboTwin is **not** bundled in this repo. Clone and install it separately (SAPIEN + CuRobo are required).
+
+> **Version note**: all RoboTwin results in this repo were produced against the official
+> [`stable_2.0`](https://github.com/RoboTwin-Platform/RoboTwin/tree/stable_2.0) branch.
+> RoboTwin `main` has since migrated to the XPolicyLab evaluation stack and removed the
+> `policy/` plugin layout these instructions rely on — make sure to clone `stable_2.0` as below.
 
 ```bash
 conda create -n RoboTwin python=3.10 -y
 conda activate RoboTwin
 
-git clone https://github.com/TianxingChen/RoboTwin.git
+git clone -b stable_2.0 https://github.com/RoboTwin-Platform/RoboTwin.git
 cd RoboTwin
 pip install -r script/requirements.txt
 pip install websockets
 
 # CuRobo is REQUIRED — expert solvability check and scene setup use its motion planner
-cd envs && git clone https://github.com/NVlabs/curobo.git
+cd envs && git clone -b v0.7.8 --depth 1 https://github.com/NVlabs/curobo.git
 cd curobo && python -m pip install -e . --no-build-isolation && cd ../..
 ```
-> See the [RoboTwin README](https://github.com/TianxingChen/RoboTwin) for full setup (assets, SAPIEN, mplib).
+> See the [RoboTwin README (`stable_2.0`)](https://github.com/RoboTwin-Platform/RoboTwin/tree/stable_2.0) for full setup (assets, SAPIEN, mplib).
 
 #### 2️⃣ Model Preparation
 
