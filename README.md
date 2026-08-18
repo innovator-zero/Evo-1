@@ -469,12 +469,12 @@ lerobot-record \
     --display_data=true \
     --dataset.repo_id=yinxinyuchen/eval_evo1 \
     --dataset.single_task="Grab the green cube and put the cube in the green box" \
-    --policy.path=/home/dell/step_20000/
+    --policy.path=/your/path/checkpoints/step_20000/
 ```
 For reference, we also provide a recording that demonstrates how to evaluate Evo1 on SO100/SO101.
 If you already have a trained checkpoint, please refer to the following links: \
 [YouTube](https://www.youtube.com/watch?v=YzwkllipxXE) \
-[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/?vd_source=17e6e0b7820cb5c4caae006748e7551e) -->
+[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/) -->
 
 ## 📚 Citation
 ```bash
