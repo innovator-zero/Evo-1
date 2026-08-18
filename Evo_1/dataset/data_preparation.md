@@ -38,7 +38,7 @@ cache_shard_size_bytes: 268435456  # shard size for caching decoded videos, defa
 data_groups:
   franka_ee_pose_delta:
     libero_10_no_noops_lerobot:
-      path: /share/taolin/datasets/libero/libero_10_no_noops_1.0.0_lerobot
+      path: /the/path/to/your/libero_10_no_noops_1.0.0_lerobot
       view_map:
         image_1: observation.images.image
         image_2: observation.images.wrist_image
@@ -51,7 +51,7 @@ data_groups:
         ee_pose_dims: [0, 6]
         
     libero_goal_no_noops_lerobot:
-      path: /share/taolin/datasets/libero/libero_goal_no_noops_1.0.0_lerobot
+      path: /the/path/to/your/libero_goal_no_noops_1.0.0_lerobot
       view_map:
         image_1: observation.images.image
         image_2: observation.images.wrist_image
@@ -60,7 +60,7 @@ data_groups:
         
   franka_ee_abs_pose:
     droid_101_eef_lerobotv21:
-      path: /share/taolin/datasets/pretraining_data/droid_1.0.1
+      path: /the/path/to/your/droid_1.0.1_dataset
       view_map:
         image_1: observation.images.exterior_1_left
         image_2: observation.images.wrist_left

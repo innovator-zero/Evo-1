@@ -427,7 +427,7 @@ accelerate launch --num_processes 1 --num_machines 1 --deepspeed_config_file ds_
 If you want to resume the training process, you can use the following command (we use stage 2 as an example):
 
 ```bash
-accelerate launch --num_processes 1 --num_machines 1 --deepspeed_config_file ds_config.json scripts/train.py --wandb_project your_project_name --run_name Evo1_la2vla_libero_stage2 --action_head flowmatching --use_augmentation --lr 1e-5 --dropout 0.2 --weight_decay 1e-3 --batch_size 16 --image_size 448 --max_steps 80000 --log_interval 10 --ckpt_interval 5000 --warmup_steps 1000 --grad_clip_norm 1.0 --num_layers 8 --horizon 50 --finetune_vlm --finetune_action_head --disable_wandb --prefetch_factor 2 --video_backend av --cache_dir /your/path/to/dataset_cache/evo1_libero_4_seg_cache --vlm_name OpenGVLab/InternVL3-1B --dataset_config_path dataset/config.yaml --per_action_dim 24 --state_dim 24 --save_dir /your/path/checkpoints/stage2 --resume  --resume_path /the/checkpoint/path/you/want/to/resume/from/step_20000
+accelerate launch --num_processes 1 --num_machines 1 --deepspeed_config_file ds_config.json scripts/train.py --wandb_project your_project_name --run_name Evo1_libero_stage2_resume --action_head flowmatching --use_augmentation --lr 1e-5 --dropout 0.2 --weight_decay 1e-3 --batch_size 16 --image_size 448 --max_steps 80000 --log_interval 10 --ckpt_interval 5000 --warmup_steps 1000 --grad_clip_norm 1.0 --num_layers 8 --horizon 50 --finetune_vlm --finetune_action_head --disable_wandb --prefetch_factor 2 --video_backend av --cache_dir /your/path/to/dataset_cache/evo1_libero_4_seg_cache --vlm_name OpenGVLab/InternVL3-1B --dataset_config_path dataset/config.yaml --per_action_dim 24 --state_dim 24 --save_dir /your/path/checkpoints/stage2 --resume  --resume_path /the/checkpoint/path/you/want/to/resume/from/step_20000
 ```
 
 
@@ -570,12 +570,12 @@ lerobot-record \
     --display_data=true \
     --dataset.repo_id=yinxinyuchen/eval_evo1 \
     --dataset.single_task="Grab the green cube and put the cube in the green box" \
-    --policy.path=/home/dell/step_20000/
+    --policy.path=/your/path/checkpoints/step_20000/
 ```
 For reference, we also provide a recording that demonstrates how to evaluate Evo1 on SO100/SO101.
 If you already have a trained checkpoint, please refer to the following links: \
 [YouTube](https://www.youtube.com/watch?v=YzwkllipxXE) \
-[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/?vd_source=17e6e0b7820cb5c4caae006748e7551e) -->
+[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/) -->
 
 ## 📚 Citation
 ```bibtex

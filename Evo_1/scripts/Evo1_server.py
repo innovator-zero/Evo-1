@@ -288,7 +288,7 @@ async def handle_request(websocket, model, normalizer, arm_key, dataset_key):
 
 if __name__ == "__main__":
     ckpt_dir = "Your/Path/To/Checkpoint"
-    #Example: ckpt_dir = "/home/dell/checkpoints/Evo1/Evo1_MetaWorld/"
+    #Example: ckpt_dir = "/your/path/checkpoints/Evo1/Evo1_MetaWorld/"
 
     port = 9000
     
