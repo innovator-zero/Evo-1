@@ -1,5 +1,5 @@
 
-# Evo-1: Lightweight Vision-Language-Action Model with Preserved Semantic Alignment
+# Evo-1: Lightweight Vision-Language-Action Model with Preserved Semantic Alignment [CVPR 2026]
 
 [![📄 Paper](https://img.shields.io/badge/arXiv-Paper-red)](https://arxiv.org/abs/2511.04555)  
 
@@ -15,6 +15,16 @@
 
 
 ## 📰 News  
+- 🗓️ **2026-08-05** — Evo-1 is now supported in the **official [RLinf](https://github.com/RLinf/RLinf) framework** 🔥: full-parameter SFT and GRPO fine-tuning on the LIBERO simulator ([doc](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html)).
+- 🗓️ **2026-07-21** — Released RoboTwin evaluation (Evo-1 policy plugin + 50 bimanual tasks). See [RoboTwin benchmark](#-robotwin-benchmark) part.
+- 🗓️ **2026-07-20** — Release LIBERO-plus benchmark evaluation scripts and results. See [LIBERO-plus benchmark](#-libero-plus-benchmark) part.
+- 🗓️ **2026-07-05** — Evo-1 has been added to the **official [LeRobot](https://github.com/huggingface/lerobot) framework** 🎉🎉.
+- 🗓️ **2026-06-07** — Evo-1 received the 🎖️ Efficient CVPR Badge 🎖️.
+- 🗓️ **2026-04-10** — Updated the `evo1-flash` branch: faster training with reduced GPU memory usage.
+- 🗓️ **2026-04-10** — Updated the `evo1-lerobot` branch: Evo-1 is now fully integrated into the LeRobot framework.
+- 🗓️ **2026-04-08** — Evo-1 is now fully integrated into the LeRobot framework!
+- 🗓️ **2026-04-08** — We released Evo-1 Docker support for Jetson (https://huggingface.co/datasets/MINT-SJTU/Evo-1_JetsonOrin).
+- 🗓️ **2026-02-20** — Evo-1 is accepted by CVPR 2026 🎉🎉
 - 🗓️ **2025-12-15** — Added Evo-1 inference code in Aloha dual arm (Implemented by community user @meijie-jesse)
 - 🗓️ **2025-11-15** — Added Evo-1 inference in the LeRobot framework for SO100/SO101
 - 🗓️ **2025-11-10** — Released inference script in xarm6
@@ -28,10 +38,11 @@
 ## ✅ To-Do List  
 
 - ✅ Release inference script in xarm6 
-- ✅ Add Evo-1 to the LeRobot framework for SO100/SO101   
-- ⬜ Release instructions for deploying Evo-1 on Jetson Orin
-- ⬜ Release results of all 50 RoboTwin tasks
-- ⬜ Release RoboTwin evaluation script  
+- ✅ Update `evo1-flash` branch (faster training + reduced GPU memory usage)
+- ✅ Update `evo1-lerobot` branch (fully integrated Evo-1 into the LeRobot framework)
+- ✅ Release instructions for deploying Evo-1 on Jetson Orin (https://huggingface.co/datasets/MINT-SJTU/Evo-1_JetsonOrin)
+- ✅ Release RoboTwin evaluation script (see the [`evo1-flash`](https://github.com/MINT-SJTU/Evo-1/tree/evo1-flash) branch)
+- ✅ Release results of all 50 RoboTwin tasks
   
 
 
@@ -178,6 +189,56 @@ cd LIBERO_evaluation
 
 python libero_client_4tasks.py
 ```
+---
+### 🧪 LIBERO-plus Benchmark
+
+### 1️⃣ Prepare the environment for LIBERO
+
+Prepare LIBERO-plus evaluation environment, detailed instructions can be found in [libero-plus-eval/README.md](libero-plus-eval/README.md). Follow Step 1 to Step 6 to set up the environment and download the necessary assets.
+
+### 2️⃣ Model Preparation
+
+### 📥 2.1 Download Model Weight
+LIBERO-plus model use the same Evo-1 model weight as LIBERO, you can download it from HuggingFace:
+
+```bash
+hf download MINT-SJTU/Evo1_LIBERO --local-dir /path/to/save/checkpoint/
+```
+
+### ✏️ 2.2 Modify server config
+Modify checkpoint dir: [Evo1_server.py#L149](Evo_1/scripts/Evo1_server.py#L149)  
+(Optional) Modify server port: [Evo1_server.py#L152](Evo_1/scripts/Evo1_server.py#L152) 
+
+#### 3️⃣ Run LIBERO Evaluation
+
+```bash
+# Terminal 1
+conda activate Evo1
+
+cd Evo_1
+
+python scripts/Evo1_server.py
+```
+
+Open another terminal and run the evaluation script for LIBERO-plus, more specific instructions can be found in [libero-plus-eval/README.md](libero-plus-eval/README.md) Step 7. Following is an simple example of running the evaluation for the `libero_spatial` suite:
+```bash
+# Terminal 2
+conda activate libero_plus
+export LIBERO_CONFIG_PATH="$HOME/.libero-plus"
+cd /path/to/libero-plus-eval
+
+bash test_libero_plus.sh libero_spatial
+```
+---
+
+### 🧪 RoboTwin Benchmark
+
+Evo-1 is evaluated on **RoboTwin 2.0** (50 bimanual manipulation tasks, `aloha-agilex` embodiment). RoboTwin uses a **policy-plugin** architecture: start the Evo-1 server, drop the Evo-1 policy adapter into a RoboTwin checkout, and launch RoboTwin's evaluator as the client.
+
+- **Model weight:** `hf download MINT-SJTU/Evo1_RoboTwin --local-dir /path/to/save/checkpoint/`
+- **Evaluation scripts** — the policy plugin (`RoboTwin_evaluation/`) and full step-by-step instructions live in the [`evo1-flash`](https://github.com/MINT-SJTU/Evo-1/tree/evo1-flash) branch (see its README's *RoboTwin Benchmark* section).
+
+---
 
 ## 🧠 Training on Your Own Dataset
 
@@ -300,7 +361,9 @@ The key is to construct an observation dict and pass it to the server.
 ```
 ## 🤖 5.Inference in Lerobot SO100/SO101
 
-We add our policy in /so100_evo1/lerobot-main/src/lerobot/policies/evo1/
+  For detailed instructions, please check out the `evo1-lerobot` branch.
+
+<!-- We add our policy in /so100_evo1/lerobot-main/src/lerobot/policies/evo1/
 
 ### 🔧 5.1 Environment Setup for Collecting LeRobot v2.1 Data 
 
@@ -406,12 +469,12 @@ lerobot-record \
     --display_data=true \
     --dataset.repo_id=yinxinyuchen/eval_evo1 \
     --dataset.single_task="Grab the green cube and put the cube in the green box" \
-    --policy.path=/home/dell/step_20000/
+    --policy.path=/your/path/checkpoints/step_20000/
 ```
 For reference, we also provide a recording that demonstrates how to evaluate Evo1 on SO100/SO101.
 If you already have a trained checkpoint, please refer to the following links: \
 [YouTube](https://www.youtube.com/watch?v=YzwkllipxXE) \
-[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/?vd_source=17e6e0b7820cb5c4caae006748e7551e)
+[bilibili](https://www.bilibili.com/video/BV1cg2QBhErT/) -->
 
 ## 📚 Citation
 ```bash

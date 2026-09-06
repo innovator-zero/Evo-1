@@ -20,7 +20,7 @@ data_groups:
   # This is an example of how to configure the dataset path and view mapping for MetaWorld
   metaworld_sawyer:
     Evo1_MetaWorld:
-      path: /home/dell/code/lintao/Evo_1/Evo1_training_dataset/Evo1_MetaWorld_Dataset
+      path: /the/path/to/your/Evo1_MetaWorld_Dataset
       view_map:
         image_1: observation.images.image
 
@@ -31,25 +31,25 @@ data_groups:
 
   # libero_franka:
   #   libero_spatial_no_noops_1.0.0_lerobot:
-  #     path: /share/taolin/datasets/libero/libero_spatial_no_noops_1.0.0_lerobot
+  #     path: /the/path/to/your/libero_spatial_no_noops_1.0.0_lerobot
   #     view_map:
   #       image_1: observation.images.image
   #       image_2: observation.images.wrist_image
 
   #   libero_object_no_noops_1.0.0_lerobot:
-  #     path: /share/taolin/datasets/libero/libero_object_no_noops_1.0.0_lerobot
+  #     path: /the/path/to/your/libero_object_no_noops_1.0.0_lerobot
   #     view_map:
   #       image_1: observation.images.image
   #       image_2: observation.images.wrist_image
 
   #   libero_goal_no_noops_1.0.0_lerobot:
-  #     path: /share/taolin/datasets/libero/libero_goal_no_noops_1.0.0_lerobot
+  #     path: /the/path/to/your/libero_goal_no_noops_1.0.0_lerobot
   #     view_map:
   #       image_1: observation.images.image
   #       image_2: observation.images.wrist_image
 
   #   libero_10_no_noops_1.0.0_lerobot:
-  #     path: /share/taolin/datasets/libero/libero_10_no_noops_1.0.0_lerobot
+  #     path: /the/path/to/your/libero_10_no_noops_1.0.0_lerobot
   #     view_map:
   #       image_1: observation.images.image
   #       image_2: observation.images.wrist_image
@@ -64,7 +64,7 @@ data_groups:
 
   # robotwin_robot:
   # click_alarmclock_v2.1:
-  #   path: /share/taolin/datasets/robotwin/click_alarmclock_v2.1
+  #   path: /the/path/to/your/robotwin_click_alarmclock_v2.1
   #   view_map:
   #     image_1: observation.images.image_1
   #     image_2: observation.images.image_2

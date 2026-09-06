@@ -9,3 +9,7 @@ logs/
 checkpoints/
 Evo1_training_dataset/
 LIBERO/
+*.egg-info/
+build/
+dist/
+*.pyc

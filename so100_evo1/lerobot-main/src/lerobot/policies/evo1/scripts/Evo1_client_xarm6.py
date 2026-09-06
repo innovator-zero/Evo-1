@@ -40,7 +40,9 @@ def resize_with_pad(image, method=Image.BILINEAR):
     return img_numpy
 
 
-arm = XArmAPI('192.168.1.222')
+XARM_IP = "your.xarm.controller.ip"  # e.g. 192.168.1.100
+
+arm = XArmAPI(XARM_IP)
 arm.clean_error()
 arm.motion_enable(True)
 arm.set_gripper_enable(True)
