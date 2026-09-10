@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import random
 from collections import OrderedDict, defaultdict
@@ -164,10 +165,15 @@ class LeRobotDataset(Dataset):
         binarize_gripper: bool = False,
         cache_dir: Union[str, Path] = None,
         use_augmentation: bool = False,
+        max_episodes: Optional[int] = None,
     ):
         self.config = config
         self.image_size = image_size
         self.max_samples_per_file = max_samples_per_file
+        self.max_episodes = max_episodes
+        if max_episodes is not None and max_episodes <= 0:
+            raise ValueError("max_episodes must be positive")
+        self.strict_data = bool(config.get("strict_data", False))
         self.binarize_gripper = binarize_gripper
         self.use_augmentation = use_augmentation
         self.action_horizon = action_horizon
@@ -187,7 +193,12 @@ class LeRobotDataset(Dataset):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         export_key_raw = str(self.config.get("datasets_manifest", "datasets_manifest.pkl"))
-        self.export_key = Path(export_key_raw).stem
+        fingerprint = hashlib.sha256(json.dumps({
+            "config": config, "horizon": action_horizon,
+            "max_episodes": max_episodes, "max_samples_per_file": max_samples_per_file,
+            "window_version": 3,
+        }, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        self.export_key = f"{Path(export_key_raw).stem}_{fingerprint}"
         self.manifest_root = self.cache_dir / "manifest" / self.export_key
         self.manifest_root.mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +248,8 @@ class LeRobotDataset(Dataset):
         )
 
     def __del__(self):
-        self._close_runtime_resources()
+        if hasattr(self, "_data_file_handles") and hasattr(self, "_decoder_cache"):
+            self._close_runtime_resources()
 
     def _close_runtime_resources(self):
         for _, f in self._data_file_handles.items():
@@ -270,11 +282,21 @@ class LeRobotDataset(Dataset):
                 stats_path = dataset_path / "meta" / "episodes_stats.jsonl"
                 stats_path_after_compute = dataset_path / "meta" / "stats.json"
                 use_delta_action = dataset_config.get("use_delta_action", False)
+                suite = get_suite(dataset_config.get("process_suite", "default"), dataset_config.get("suite_config", {}))
+                raw_field_stats = bool(dataset_config.get("raw_field_stats", False))
+                if raw_field_stats and use_delta_action:
+                    raise ValueError("raw_field_stats requires use_delta_action=false")
 
                 if stats_path_after_compute.exists():
                     with open(stats_path_after_compute, "r", encoding="utf-8") as f:
                         stats = json.load(f)
+                    if raw_field_stats:
+                        if not hasattr(suite, "adapt_stats"):
+                            raise ValueError("raw_field_stats requires a suite with adapt_stats")
+                        stats = suite.adapt_stats(stats)
                 else:
+                    if raw_field_stats:
+                        raise FileNotFoundError(f"Raw per-field stats required: {stats_path_after_compute}")
                     logging.info(f"Computing norm stats for {dataset_path}...")
                     try:
                         compute_normstats_regular(
@@ -301,6 +323,8 @@ class LeRobotDataset(Dataset):
                 self.arm2stats_dict[arm_name][dataset_name] = stats
 
                 parquet_files = sorted((dataset_path / "data").glob("*/*.parquet"))
+                if self.max_episodes is not None:
+                    parquet_files = parquet_files[:self.max_episodes]
                 if not parquet_files:
                     logging.warning("No parquet files found under %s", dataset_path / "data")
 
@@ -329,28 +353,41 @@ class LeRobotDataset(Dataset):
         df = pd.read_parquet(parquet_path)
         if len(df) == 0:
             return
+        original_length = len(df)
 
         view_order = list(entry["view_map"].keys())
 
         last_row = df.iloc[-1:]
-        padding_rows = pd.concat([last_row] * self.action_horizon, ignore_index=True)
+        padding_rows = pd.concat([last_row] * (self.action_horizon - 1), ignore_index=True) if self.action_horizon > 1 else df.iloc[:0]
         df = pd.concat([df, padding_rows], ignore_index=True)
-        if self.max_samples_per_file is not None:
-            df = df.head(self.max_samples_per_file)
+        sample_count = original_length if self.max_samples_per_file is None else min(original_length, self.max_samples_per_file)
 
-        for i in range(len(df) - self.action_horizon + 1):
+        video_paths = {}
+        base_video_path = entry["dataset_path"] / "videos" / parquet_path.parent.name
+        for view_key, view_folder in entry["view_map"].items():
+            full_path = base_video_path / view_folder / f"{parquet_path.stem}.mp4"
+            if full_path.exists():
+                video_paths[view_key] = str(full_path)
+            elif self.strict_data:
+                raise FileNotFoundError(f"Missing required video for {parquet_path}: {full_path}")
+
+        for i in range(sample_count):
             sub_df = df.iloc[i : i + self.action_horizon]
-            processed = suite.process(sub_df, use_delta_action=entry["use_delta_action"])
-
-            video_paths = {}
-            base_video_path = entry["dataset_path"] / "videos" / parquet_path.parent.name
-            for view_key, view_folder in entry["view_map"].items():
-                full_path = base_video_path / view_folder / f"{parquet_path.stem}.mp4"
-                if full_path.exists():
-                    video_paths[view_key] = str(full_path)
+            try:
+                processed = suite.process(sub_df, use_delta_action=entry["use_delta_action"])
+                if self.strict_data:
+                    stats = self.arm2stats_dict[entry["arm_name"]][entry["dataset_name"]]
+                    for key, values in (("observation.state", processed.state), ("action", processed.actions)):
+                        arr = np.asarray(values, dtype=np.float32)
+                        if not np.isfinite(arr).all() or arr.shape[-1] != len(stats[key]["min"]):
+                            raise ValueError(f"Invalid {key}: shape={arr.shape}, stats_dim={len(stats[key]['min'])}")
+            except Exception as exc:
+                raise ValueError(f"Invalid data in {parquet_path}, frame {i}: {exc}") from exc
 
             task_index = sub_df.iloc[0].get("task_index", None)
             prompt = entry["task_mapping"].get(task_index, "")
+            if self.strict_data and not prompt:
+                raise ValueError(f"Missing task description in {parquet_path}, frame {i}, task_index={task_index}")
 
             yield {
                 "arm_key": entry["arm_name"],
@@ -638,6 +675,8 @@ class LeRobotDataset(Dataset):
         try:
             record = self._read_record(idx)
         except Exception as e:
+            if self.strict_data:
+                raise
             logging.info("cannot load cache record at idx=%s: %s", idx, e)
             return self[random.randint(0, len(self._index) - 1)]
 
@@ -655,6 +694,8 @@ class LeRobotDataset(Dataset):
                 view_order=view_order,
             )
         except Exception as e:
+            if self.strict_data:
+                raise
             logging.warning(
                 f"Failed to decode video for sample idx={idx}, arm={arm_key}, dataset={dataset_key}: {e}. Skipping to another sample."
             )

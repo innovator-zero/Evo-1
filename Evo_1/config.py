@@ -11,6 +11,7 @@ class EvoConfig:
     action_head: str = "flowmatching"
     return_cls_only: bool = False
     disable_wandb: bool = False
+    disable_swanlab: bool = False
     wandb_project: str = "default_run"
     debug: bool = False
 
@@ -23,6 +24,7 @@ class EvoConfig:
     use_augmentation: bool = False
     vision_masked: bool = False
     max_samples_per_file: Optional[int] = None
+    max_episodes: Optional[int] = None
     horizon: int = 16
     video_backend: str = "av"
     cache_dir: Optional[str] = None
@@ -45,6 +47,9 @@ class EvoConfig:
     save_dir: str = "./checkpoints"
     enable_gradient_checkpointing: bool = True
     gradient_checkpointing_use_reentrant: bool = False
+    seed: int = 42
+    verify_updates: bool = False
+    normalization_type: str = "bounds"
 
     # Resume
     resume: bool = False

@@ -129,9 +129,12 @@ class EVO1(nn.Module):
         return action
     
 
-    def forward(self, fused_tokens, state=None, actions_gt=None, action_mask=None, embodiment_ids=None):
-   
-
+    def forward(self, fused_tokens=None, state=None, actions_gt=None, action_mask=None,
+                embodiment_ids=None, images=None, image_mask=None, prompts=None):
+        # Keep both VLM and action head inside the distributed forward boundary.
+        if fused_tokens is None:
+            with torch.set_grad_enabled(self.training and any(p.requires_grad for p in self.embedder.parameters())):
+                fused_tokens = self.get_vl_embeddings(images, image_mask, prompts, return_cls_only=False)
         return self.predict_action(fused_tokens, state, actions_gt, action_mask, embodiment_ids)
 
     def _freeze_module(self, module: nn.Module, name: str):

@@ -440,10 +440,16 @@ class CustomSuite(BaseProcessSuite):
         self.state_key = self.config.get("state_key", "observation.state")
         self.action_key = self.config.get("action_key", "action")
         self.action_concat_keys = self.config.get("action_concat_keys", None)
+        self.state_concat_keys = self.config.get("state_concat_keys", None)
         self.relative_dims = self.config.get("relative_dims", [[0, 6]])
         self.gripper_indices = self.config.get("gripper_indices", [])
     
     def extract_state(self, row: pd.Series) -> Optional[np.ndarray]:
+        if self.state_concat_keys:
+            return np.concatenate([
+                np.asarray(row[key], dtype=np.float32).reshape(-1)
+                for key in self.state_concat_keys
+            ])
         state = row.get(self.state_key, None)
         if state is not None:
             return np.array(state)
@@ -467,12 +473,38 @@ class CustomSuite(BaseProcessSuite):
         actions: np.ndarray
     ) -> np.ndarray:
         try:
-            states = np.stack(sub_df[self.state_key].to_list())
+            states = np.stack([self.extract_state(row) for _, row in sub_df.iterrows()])
         except Exception:
             return actions
         
         relative_dims = [tuple(d) for d in self.relative_dims]
         return self.compute_relative_actions(actions, states, relative_dims)
+
+    def adapt_stats(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """Map raw per-field stats using the same channel order as the samples.
+
+        Concatenation is valid for each per-channel metric when no relative
+        conversion is applied. The caller keeps the dataset's source file intact.
+        """
+        result = dict(stats)
+        for target, keys, fallback in (
+            ("observation.state", self.state_concat_keys, self.state_key),
+            ("action", self.action_concat_keys, self.action_key),
+        ):
+            keys = keys or [fallback]
+            if any(key not in stats for key in keys):
+                raise ValueError(f"Missing raw normalization statistics for {keys}")
+            metrics = ("min", "max", "mean", "std", "q01", "q99")
+            result[target] = {
+                metric: np.concatenate([
+                    np.asarray(stats[key][metric], dtype=np.float32).reshape(-1)
+                    for key in keys
+                ]).tolist()
+                for metric in metrics if all(metric in stats[key] for key in keys)
+            }
+            if not {"min", "max"}.issubset(result[target]):
+                raise ValueError(f"Missing min/max normalization statistics for {keys}")
+        return result
 
 
 

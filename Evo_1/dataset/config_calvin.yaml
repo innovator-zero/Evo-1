@@ -1,0 +1,23 @@
+# Field order matches better_openpi/src/openpi/policies/calvin_policy.py.
+max_action_dim: 24
+max_state_dim: 24
+max_views: 3
+normalization_type: bounds
+datasets_manifest: calvin_abc
+strict_data: true
+decoder_cache_size: 16
+cache_shard_size_bytes: 268435456
+data_groups:
+  calvin_franka_delta:
+    InternData-Calvin_ABC:
+      path: /home/ma-user/work/dataset/lerobot/InternData-Calvin_ABC
+      view_map:
+        image_1: video.image_base
+        image_2: video.image_wrist
+      use_delta_action: false
+      raw_field_stats: true
+      process_suite: custom
+      suite_config:
+        state_concat_keys: [state.ee_pos, state.ee_rot, state.gripper]
+        action_concat_keys: [action.delta_ee_pos, action.delta_ee_rot, action.gripper]
+        gripper_indices: [6]

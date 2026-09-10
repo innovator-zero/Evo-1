@@ -13,3 +13,5 @@ LIBERO/
 build/
 dist/
 *.pyc
+Evo_1/.cache/
+Evo_1/dataset/dataset_cache/

@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import inspect
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR
 from Evo1 import EVO1
 from accelerate import Accelerator 
@@ -23,9 +22,11 @@ import shutil
 from torch.optim import AdamW
 
 from config import EvoConfig
+from accelerate.utils import set_seed
 import warnings
 
 accelerator = Accelerator()
+SWANLAB_ENABLED = False
 
 def inspect_named_submodules(module_dict: dict, verbose: bool = True):
 
@@ -118,20 +119,24 @@ def init_wandb(config: EvoConfig, accelerator: Accelerator):
             name=config.run_name,
             config=config.to_dict(),
             dir=config.save_dir,
-            mode="offline",
+            mode="disabled" if config.disable_wandb else "offline",
         )
 
         wandb.define_metric("step")
         wandb.define_metric("*", step_metric="step")
 
 def init_swanlab(config: EvoConfig, accelerator: Accelerator):
-
+    global SWANLAB_ENABLED
+    SWANLAB_ENABLED = False
+    if config.disable_swanlab:
+        return
     if accelerator is None or accelerator.is_main_process:
         swanlab.init(
             project=config.wandb_project,
             name=config.run_name,
             config=config.to_dict()
         )
+        SWANLAB_ENABLED = True
 
 def prepare_dataset(config: EvoConfig) -> torch.utils.data.Dataset:
     dataset_type = config.dataset_type
@@ -146,6 +151,7 @@ def prepare_dataset(config: EvoConfig) -> torch.utils.data.Dataset:
         import yaml
         with open(config.dataset_config_path, 'r') as f:
             dataset_config = yaml.safe_load(f)
+        config.normalization_type = dataset_config.get("normalization_type", "bounds")
 
         dataset = LeRobotDataset(
             config=dataset_config,
@@ -154,6 +160,7 @@ def prepare_dataset(config: EvoConfig) -> torch.utils.data.Dataset:
             action_horizon=horizon,
             binarize_gripper=binarize_gripper,
             use_augmentation=use_augmentation,
+            max_episodes=config.max_episodes,
             video_backend=config.video_backend,
             cache_dir=config.cache_dir if config.cache_dir else os.path.join(os.path.dirname(__file__), "..", "dataset", "dataset_cache")
         )
@@ -170,6 +177,8 @@ def prepare_dataloader(dataset, config: EvoConfig) -> DataLoader:
     pin_memory = config.pin_memory
     persistent_workers = config.persistent_workers
     prefetch_factor = config.prefetch_factor
+    if len(dataset) < batch_size:
+        raise ValueError(f"No complete batches: dataset size={len(dataset)}, batch_size={batch_size}")
 
     dataloader = DataLoader(
         dataset,
@@ -177,11 +186,13 @@ def prepare_dataloader(dataset, config: EvoConfig) -> DataLoader:
         shuffle=True,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        persistent_workers=persistent_workers,
-        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers and num_workers > 0,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
         drop_last=True,
         collate_fn=custom_collate_fn
     )
+    if len(dataloader) == 0:
+        raise ValueError(f"No complete batches: dataset size={len(dataset)}, batch_size={batch_size}")
     if accelerator is None or accelerator.is_main_process:
         logging.info(f"Initialized dataloader with batch size {batch_size}, num_workers {num_workers}, pin_memory {pin_memory}, persistent_workers {persistent_workers}, prefetch_factor {prefetch_factor}")
     return dataloader
@@ -244,11 +255,12 @@ def log_training_step(step, loss, total_norm, momentum_norm, scheduler, dataload
             "current_epoch": current_epoch,
             "learning_rate": scheduler.get_last_lr()[0],
             "grad_norm/total": total_norm,
-            "optimizer/momentum_norm": momentum_norm.item(),
             "memory/current_gb": current_real_memory,
             "memory/peak_gb": peak_real_memory,
             "memory/reserved_gb": current_reserved_memory,
         }
+        if momentum_norm is not None:
+            wandb_log_dict["optimizer/momentum_norm"] = momentum_norm.item()
         if sec_per_step is not None:
             wandb_log_dict["sec_per_step"] = sec_per_step
             wandb_log_dict["it_per_sec"] = it_per_sec
@@ -261,10 +273,12 @@ def log_training_step(step, loss, total_norm, momentum_norm, scheduler, dataload
             wandb_log_dict["global_max_reserved_gb"] = global_max_reserved_gb
 
         wandb.log(wandb_log_dict)
-        swanlab.log(wandb_log_dict)
+        if SWANLAB_ENABLED:
+            swanlab.log(wandb_log_dict)
 
-def save_checkpoint(save_dir, step, model_engine, loss, accelerator, optimizer=None, scheduler=None, config: EvoConfig=None, norm_stats=None):
-    tag = f"step_{step}"
+def save_checkpoint(save_dir, step, model_engine, loss, accelerator, optimizer=None, scheduler=None, config: EvoConfig=None, norm_stats=None, tag=None):
+    step = int(step)
+    tag = tag or f"step_{step}"
     checkpoint_dir = os.path.join(save_dir, tag)
     use_deepspeed = accelerator.distributed_type == DistributedType.DEEPSPEED
 
@@ -276,9 +290,11 @@ def save_checkpoint(save_dir, step, model_engine, loss, accelerator, optimizer=N
 
     client_state = {
         "step": step,
+        "global_step": step,
+        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
         "best_loss": loss if isinstance(loss, float) else loss.item(),
         "config": config.to_dict() if config else None,
-    } if accelerator.is_main_process else {} 
+    }
 
     if use_deepspeed:
         model_engine.save_checkpoint(save_dir, tag=tag, client_state=client_state)
@@ -296,6 +312,7 @@ def save_checkpoint(save_dir, step, model_engine, loss, accelerator, optimizer=N
             unwrapped_model = accelerator.unwrap_model(model_engine)
             payload = {
                 "step": step,
+                "global_step": step,
                 "best_loss": loss if isinstance(loss, float) else loss.item(),
                 "config": config.to_dict() if config else None,
                 "norm_stats": norm_stats,
@@ -330,14 +347,14 @@ def load_checkpoint_standard(model_engine, optimizer, load_dir, accelerator, tag
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Standard checkpoint file not found: {checkpoint_path}")
 
-    payload = torch.load(checkpoint_path, map_location="cpu")
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     unwrapped_model = accelerator.unwrap_model(model_engine)
     
     try:
         unwrapped_model.load_state_dict(payload["model_state_dict"], strict=True)
-    except Exception as e:
+    except RuntimeError as exc:
         if accelerator.is_main_process:
-            logging.warning(f"Strict load failed: {e}. Trying non-strict.")
+            logging.warning(f"Strict load failed: {exc}. Trying non-strict.")
         unwrapped_model.load_state_dict(payload["model_state_dict"], strict=False)
 
     if load_optimizer_states and optimizer is not None and payload.get("optimizer_state_dict") is not None:
@@ -348,41 +365,24 @@ def load_checkpoint_standard(model_engine, optimizer, load_dir, accelerator, tag
     return payload.get("step", 0), payload
 
 def load_checkpoint_with_deepspeed(model_engine, load_dir, accelerator, tag="step_best", load_optimizer_states=True, resume_pretrain=False):
-
     try:
         load_path, client_state = model_engine.load_checkpoint(
-            load_dir,
-            tag=tag,
-            load_module_strict=True,
+            load_dir, tag=tag, load_module_strict=True,
             load_optimizer_states=load_optimizer_states and not resume_pretrain,
-            load_lr_scheduler_states=load_optimizer_states and not resume_pretrain
+            load_lr_scheduler_states=False,
+            load_module_only=resume_pretrain,
         )
+    except Exception as exc:
         if accelerator.is_main_process:
-            logging.info(f"Loaded DeepSpeed checkpoint from {load_dir}/{tag} (including optimizer states)")
-        return client_state.get("step", 0), client_state
-        
-    except Exception as e:
-        if accelerator.is_main_process:
-            logging.warning(f"World size mismatch detected: {str(e)}")
-            logging.warning("Attempting to load only model weights (skipping optimizer states)...")
-        try:
-            load_path, client_state = model_engine.load_checkpoint(
-                load_dir,
-                tag=tag,
-                load_module_strict=True,
-                load_optimizer_states=False,
-                load_lr_scheduler_states=False
-            )
-            if accelerator.is_main_process:
-                logging.info(f"Loaded DeepSpeed checkpoint from {load_dir}/{tag} (model weights only)")
-            return client_state.get("step", 0), client_state
-            
-        except Exception as e2:
-            if accelerator.is_main_process:
-                logging.error(f"Failed to load checkpoint even without optimizer states: {str(e2)}")
-            raise RuntimeError(f"Failed to load DeepSpeed checkpoint from {load_dir} with tag {tag}: {str(e2)}")
-
-    
+            logging.warning(f"DeepSpeed checkpoint restore failed: {exc}. Retrying weights only; optimizer state will not be restored.")
+        load_path, client_state = model_engine.load_checkpoint(
+            load_dir, tag=tag, load_module_strict=True,
+            load_optimizer_states=False, load_lr_scheduler_states=False,
+            load_module_only=True,
+        )
+    if load_path is None:
+        raise FileNotFoundError(f"No checkpoint loaded from {load_dir}/{tag}")
+    return client_state.get("global_step", client_state.get("step", 0)), client_state
 
 
 # def get_and_clip_grad_norm(accelerator, model, max_norm: float = 1.0):
@@ -454,8 +454,10 @@ def build_param_groups(model, wd):
             {"params": no_decay, "weight_decay": 0.0}]
 
 def train(config: EvoConfig):
-
-
+    config.device = str(accelerator.device)
+    if config.max_steps <= 0 or config.horizon <= 0:
+        raise ValueError("max_steps and horizon must be positive")
+    set_seed(config.seed, device_specific=True)
     # === Set logging ===
     save_dir = config.save_dir
     log_path = setup_logging(save_dir)
@@ -499,7 +501,8 @@ def train(config: EvoConfig):
 
 
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
-    model_engine = model  
+    model_engine = model
+    unwrapped_model = accelerator.unwrap_model(model)
   
     if accelerator.is_main_process:
         logging.info("Initialized with Accelerate")
@@ -530,6 +533,7 @@ def train(config: EvoConfig):
     if resume != bool(resume_path):
         raise ValueError("Inconsistent resume configuration: --resume and --resume_path must be set together.")
     
+    client_state = {}
     if resume:
         resume_path = resume_path.rstrip("/")
         resume_dir, resume_tag = os.path.split(resume_path)
@@ -562,19 +566,35 @@ def train(config: EvoConfig):
             logging.info("Starting fresh training")
 
     if resume_pretrain:
+        best_loss = float("inf")
         step = 0
         logging.info("Resuming pretraining from scratch, resetting step to 0")
 
-    scheduler = LambdaLR(optimizer, get_lr_lambda(warmup_steps, max_steps, resume_step=step))
+    if not isinstance(step, int):
+        raise ValueError(f"Checkpoint step must be an integer, got {step!r}")
+    if step >= max_steps:
+        raise ValueError(f"Resume step {step} must be less than max_steps {max_steps}")
+    scheduler_state = client_state.get("scheduler_state_dict") if resume and not resume_pretrain else None
+    scheduler = LambdaLR(optimizer, get_lr_lambda(warmup_steps, max_steps, resume_step=0 if scheduler_state else step))
+    if scheduler_state:
+        scheduler.load_state_dict(scheduler_state)
+        for group, lr in zip(optimizer.param_groups, scheduler.get_last_lr()):
+            group["lr"] = lr
+    logging.info("Starting at global_step=%s, learning_rates=%s", step, scheduler.get_last_lr())
+    update_check = None
+    if config.verify_updates:
+        from training_checks import UpdateCheck
+        update_check = UpdateCheck(unwrapped_model, accelerator)
+
 
 
     if accelerator.is_main_process:
         
         inspect_named_submodules({
-            "vision_model": model.embedder.model.vision_model,
-            "language_model": model.embedder.model.language_model,
-            "action_head": model.action_head
-        })
+            "vision_model": unwrapped_model.embedder.model.vision_model,
+            "language_model": unwrapped_model.embedder.model.language_model,
+            "action_head": unwrapped_model.action_head
+        }, verbose=False)
 
     vision_masked = config.vision_masked
     if vision_masked and accelerator.is_main_process:
@@ -592,7 +612,7 @@ def train(config: EvoConfig):
 
     # === Training Loop ===
     while step < max_steps:
-        for batch in tqdm(dataloader, desc="Training", disable=not accelerator.is_main_process):
+        for batch in dataloader:
             torch.cuda.reset_peak_memory_stats()
             
             if step >= max_steps:
@@ -609,14 +629,11 @@ def train(config: EvoConfig):
             embodiment_ids = batch["embodiment_ids"]
             
             with accelerator.autocast():
-                fused_tokens = model.get_vl_embeddings(
-                    images=images_batch, 
-                    image_mask=image_masks, 
-                    prompt=prompts, 
-                    return_cls_only=False
+                pred_velocity, noise = model(
+                    images=images_batch, image_mask=image_masks, prompts=prompts,
+                    state=states, actions_gt=actions_gt, action_mask=action_mask,
+                    embodiment_ids=embodiment_ids,
                 )
-
-                pred_velocity, noise = model(fused_tokens, state=states, actions_gt=actions_gt, action_mask=action_mask)
                 
             target_velocity = (actions_gt - noise).view(actions_gt.shape[0], -1)
             
@@ -641,7 +658,6 @@ def train(config: EvoConfig):
                 step,
                 states=states,
                 actions_gt=actions_gt,
-                fused_tokens=fused_tokens,
                 pred_velocity=pred_velocity,
                 loss=loss
             )
@@ -655,7 +671,6 @@ def train(config: EvoConfig):
                     step=step,
                     states=states,
                     actions_gt=actions_gt,
-                    fused_tokens=fused_tokens,
                     pred_velocity=pred_velocity,
                     loss=loss
                 )
@@ -663,24 +678,34 @@ def train(config: EvoConfig):
                     logging.warning(f"[Step {step}] Numerical instability detected across GPUs (synced). Data dumped to {out_path}.")
                 
                 non_finite_streak += 1
-                if non_finite_streak > getattr(config, "non_finite_max_streak", 5):
-                    if accelerator.is_main_process:
-                        logging.error(f"[Step {step}] Numerical instability persisted for {non_finite_streak} steps. Terminating training.")
-                    break
+                if non_finite_streak >= config.non_finite_max_streak:
+                    raise FloatingPointError(f"Numerical instability persisted for {non_finite_streak} batches")
                 continue
             
             non_finite_streak = 0
 
             # === Backward and optimizer step ===
-            optimizer.zero_grad(set_to_none=True)
+            if accelerator.distributed_type != DistributedType.DEEPSPEED:
+                optimizer.zero_grad(set_to_none=True)
             accelerator.backward(loss)
 
             # === Clip grad norm ===
-            total_norm, clipped_norm = get_and_clip_grad_norm(accelerator, model, loss, max_norm)
+            if accelerator.distributed_type == DistributedType.DEEPSPEED:
+                total_norm = model_engine.get_global_grad_norm()
+                total_norm = float(total_norm) if total_norm is not None else 0.0
+            else:
+                total_norm, _ = get_and_clip_grad_norm(accelerator, model, loss, max_norm)
             # total_norm = get_and_clip_grad_norm(accelerator, model, max_norm)
 
             optimizer.step()
             scheduler.step()
+            if accelerator.is_main_process:
+                metrics = {"global_step": step + 1, "loss": loss.item(),
+                           "learning_rates": scheduler.get_last_lr(),
+                           "peak_allocated_gib": torch.cuda.max_memory_allocated() / 1024**3,
+                           "peak_reserved_gib": torch.cuda.max_memory_reserved() / 1024**3}
+                with open(os.path.join(save_dir, "metrics.jsonl"), "a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(metrics) + "\n")
             
             # === Logging ===
             if step % log_interval == 0:
@@ -702,7 +727,7 @@ def train(config: EvoConfig):
                     global_peak_allocated_gb = max(global_peak_allocated_gb, window_max_allocated_gb) if global_peak_allocated_gb is not None else window_max_allocated_gb
                     global_peak_reserved_gb = max(global_peak_reserved_gb, window_max_reserved_gb) if global_peak_reserved_gb is not None else window_max_reserved_gb
                 
-                momentum_norm = get_optimizer_momentum_norm(optimizer, accelerator)
+                momentum_norm = None if accelerator.distributed_type == DistributedType.DEEPSPEED else get_optimizer_momentum_norm(optimizer, accelerator)
                 log_training_step(
                     step, loss, total_norm, momentum_norm, scheduler, dataloader, accelerator,
                     sec_per_step=sec_per_step,
@@ -736,7 +761,8 @@ def train(config: EvoConfig):
                 accelerator.print("start to save best checkpoint")
                 save_checkpoint(
                     save_dir,
-                    step="best",
+                    step=step + 1,
+                    tag="step_best",
                     model_engine=model_engine,
                     loss=loss,
                     accelerator=accelerator,
@@ -756,10 +782,13 @@ def train(config: EvoConfig):
                 checkpoint_path = os.path.join(save_dir, f"checkpoint_step_{step}.pt")
                 save_checkpoint(save_dir, step=step, model_engine=model_engine, loss=loss, accelerator=accelerator, optimizer=optimizer, scheduler=scheduler, config=config, norm_stats=dataset.arm2stats_dict)
          
+    if update_check is not None:
+        update_check.finish(save_dir)
     # === Save final model ===
-    save_checkpoint(save_dir, step="final", model_engine=model_engine, loss=loss, accelerator=accelerator, optimizer=optimizer, scheduler=scheduler, config=config, norm_stats=dataset.arm2stats_dict)
+    save_checkpoint(save_dir, step=step, tag="step_final", model_engine=model_engine, loss=loss, accelerator=accelerator, optimizer=optimizer, scheduler=scheduler, config=config, norm_stats=dataset.arm2stats_dict)
     logging.info(f"Final model saved to step_final/")
-    logging.info(f"Best checkpoint saved to step_best/ with loss {best_loss:.6f}")
+    if os.path.isdir(os.path.join(save_dir, "step_best")):
+        logging.info(f"Best checkpoint saved to step_best/ with loss {best_loss:.6f}")
 
 
 if __name__ == "__main__":
@@ -773,6 +802,9 @@ if __name__ == "__main__":
     parser.add_argument("--action_head", type=str, default="flowmatching", choices=["flowmatching"])
     parser.add_argument("--return_cls_only", action="store_true")
     parser.add_argument("--disable_wandb", action="store_true", help="Disable wandb logging.")
+    parser.add_argument("--disable_swanlab", action="store_true", help="Disable SwanLab logging.")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--verify_updates", action="store_true", help="Verify parameter updates during short training tests.")
     parser.add_argument("--wandb_project", type=str, default="default_run", help="Project name for WandB and SwanLab")
 
     # Dataset
@@ -785,6 +817,7 @@ if __name__ == "__main__":
     parser.add_argument("--vision_masked", action="store_true", help="Mask out all visual inputs during training by forcing image masks to 0")
     parser.add_argument("--video_backend", type=str, default="av", help="Video backend for decord (e.g. 'av', 'pyav)")
     parser.add_argument("--cache_dir", type=str, default=None, help="Optional cache directory for dataset manifests and preprocessed data")
+    parser.add_argument("--max_episodes", type=int, default=None, help="Limit sorted episodes per dataset for smoke tests.")
 
     # Training
     parser.add_argument("--lr", type=float, default=1e-5)
@@ -856,5 +889,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         if accelerator.is_main_process:
             logging.info("KeyboardInterrupt received. Cleaning up...")
-        sys.exit(0)
+        sys.exit(130)
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
