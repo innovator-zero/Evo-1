@@ -22,7 +22,6 @@ from dataset.dataset_process_suite import get_suite
 from dataset.compute_normstats import compute_normstats as compute_normstats_regular
 from dataset.compute_normstats_streaming import compute_normstats as compute_normstats_streaming
 
-
 CACHE_SCHEMA_VERSION = 2
 MANIFEST_FILE = "manifest.json"
 INDEX_FILE = "index.pkl"
@@ -113,7 +112,7 @@ class _VideoDecoderLRU:
                 raise RuntimeError(f"Invalid FPS while decoding {path}")
             frame_idx = int(max(0.0, float(timestamp)) * fps)
             frame_idx = max(0, min(frame_idx, len(decoder) - 1))
-            
+
             frame_tensor = decoder[frame_idx].data
             frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
             return Image.fromarray(frame_np, mode="RGB")
@@ -193,11 +192,19 @@ class LeRobotDataset(Dataset):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         export_key_raw = str(self.config.get("datasets_manifest", "datasets_manifest.pkl"))
-        fingerprint = hashlib.sha256(json.dumps({
-            "config": config, "horizon": action_horizon,
-            "max_episodes": max_episodes, "max_samples_per_file": max_samples_per_file,
-            "window_version": 3,
-        }, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "config": config,
+                    "horizon": action_horizon,
+                    "max_episodes": max_episodes,
+                    "max_samples_per_file": max_samples_per_file,
+                    "window_version": 3,
+                },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()[:16]
         self.export_key = f"{Path(export_key_raw).stem}_{fingerprint}"
         self.manifest_root = self.cache_dir / "manifest" / self.export_key
         self.manifest_root.mkdir(parents=True, exist_ok=True)
@@ -219,17 +226,18 @@ class LeRobotDataset(Dataset):
         self._manifest: Dict[str, Any] = {}
 
         self._load_metadata()
-        
+
         try:
             from accelerate import PartialState
+
             state = PartialState()
             if state.is_main_process:
                 self._ensure_cache_exported()
-            state.wait_for_everyone() 
+            state.wait_for_everyone()
         except ImportError:
             logging.warning("Accelerate not found; skipping distributed cache export synchronization.")
             self._ensure_cache_exported()
-            
+
         self._load_runtime_index()
 
         self.basic_transform = T.Compose(
@@ -274,15 +282,15 @@ class LeRobotDataset(Dataset):
                     raise FileNotFoundError(f"tasks file not found: {tasks_path}")
                 task_records = pd.read_json(tasks_path, lines=True).to_dict("records")
                 task_mapping = {
-                    obj["task_index"]: obj["task"]
-                    for obj in task_records
-                    if "task_index" in obj and "task" in obj
+                    obj["task_index"]: obj["task"] for obj in task_records if "task_index" in obj and "task" in obj
                 }
 
                 stats_path = dataset_path / "meta" / "episodes_stats.jsonl"
                 stats_path_after_compute = dataset_path / "meta" / "stats.json"
                 use_delta_action = dataset_config.get("use_delta_action", False)
-                suite = get_suite(dataset_config.get("process_suite", "default"), dataset_config.get("suite_config", {}))
+                suite = get_suite(
+                    dataset_config.get("process_suite", "default"), dataset_config.get("suite_config", {})
+                )
                 raw_field_stats = bool(dataset_config.get("raw_field_stats", False))
                 if raw_field_stats and use_delta_action:
                     raise ValueError("raw_field_stats requires use_delta_action=false")
@@ -300,31 +308,35 @@ class LeRobotDataset(Dataset):
                     logging.info(f"Computing norm stats for {dataset_path}...")
                     try:
                         compute_normstats_regular(
-                            dataset_path, 
-                            use_delta_actions=use_delta_action, 
-                            action_horizon=self.action_horizon, 
-                            dataset_config=dataset_config
+                            dataset_path,
+                            use_delta_actions=use_delta_action,
+                            action_horizon=self.action_horizon,
+                            dataset_config=dataset_config,
                         )
                     except (MemoryError, Exception) as e:
-                        logging.warning(f"OOM or error during regular normstats compute ({e}). Falling back to streaming.")
-                        compute_normstats_streaming(
-                            dataset_path, 
-                            use_delta_actions=use_delta_action, 
-                            action_horizon=self.action_horizon, 
-                            dataset_config=dataset_config
+                        logging.warning(
+                            f"OOM or error during regular normstats compute ({e}). Falling back to streaming."
                         )
-                    
+                        compute_normstats_streaming(
+                            dataset_path,
+                            use_delta_actions=use_delta_action,
+                            action_horizon=self.action_horizon,
+                            dataset_config=dataset_config,
+                        )
+
                     if stats_path_after_compute.exists():
                         with open(stats_path_after_compute, "r", encoding="utf-8") as f:
                             stats = json.load(f)
                     else:
-                        raise FileNotFoundError(f"normalization stats file not found after compute: {stats_path_after_compute}")
+                        raise FileNotFoundError(
+                            f"normalization stats file not found after compute: {stats_path_after_compute}"
+                        )
 
                 self.arm2stats_dict[arm_name][dataset_name] = stats
 
                 parquet_files = sorted((dataset_path / "data").glob("*/*.parquet"))
                 if self.max_episodes is not None:
-                    parquet_files = parquet_files[:self.max_episodes]
+                    parquet_files = parquet_files[: self.max_episodes]
                 if not parquet_files:
                     logging.warning("No parquet files found under %s", dataset_path / "data")
 
@@ -358,9 +370,15 @@ class LeRobotDataset(Dataset):
         view_order = list(entry["view_map"].keys())
 
         last_row = df.iloc[-1:]
-        padding_rows = pd.concat([last_row] * (self.action_horizon - 1), ignore_index=True) if self.action_horizon > 1 else df.iloc[:0]
+        padding_rows = (
+            pd.concat([last_row] * (self.action_horizon - 1), ignore_index=True)
+            if self.action_horizon > 1
+            else df.iloc[:0]
+        )
         df = pd.concat([df, padding_rows], ignore_index=True)
-        sample_count = original_length if self.max_samples_per_file is None else min(original_length, self.max_samples_per_file)
+        sample_count = (
+            original_length if self.max_samples_per_file is None else min(original_length, self.max_samples_per_file)
+        )
 
         video_paths = {}
         base_video_path = entry["dataset_path"] / "videos" / parquet_path.parent.name
@@ -505,9 +523,7 @@ class LeRobotDataset(Dataset):
         with open(manifest_path, "r", encoding="utf-8") as f:
             self._manifest = json.load(f)
         if self._manifest.get("schema_version") != CACHE_SCHEMA_VERSION:
-            raise RuntimeError(
-                f"Unsupported cache schema {self._manifest.get('schema_version')} for {manifest_path}"
-            )
+            raise RuntimeError(f"Unsupported cache schema {self._manifest.get('schema_version')} for {manifest_path}")
 
         with open(index_path, "rb") as f:
             self._index = pickle.load(f)
@@ -706,8 +722,7 @@ class LeRobotDataset(Dataset):
         images: List[torch.Tensor] = []
         if self.use_augmentation:
             images = [
-                self.aug_transform(img) if random.random() < 0.5 else self.basic_transform(img)
-                for img in valid_frames
+                self.aug_transform(img) if random.random() < 0.5 else self.basic_transform(img) for img in valid_frames
             ]
         else:
             images = [self.basic_transform(img) for img in valid_frames]

@@ -1,0 +1,9 @@
+# Install after CALVIN's own environment requirements; no openpi-client needed.
+numpy
+websockets==13.1; python_version < "3.9"
+websockets>=14,<17; python_version >= "3.9"
+# Newer fsspec can import list[...] annotations that fail on CALVIN's Python 3.8.
+fsspec[http]==2024.6.1; python_version < "3.9"
+# Optional MP4 output (--save_videos).
+imageio>=2.31,<3
+imageio-ffmpeg>=0.4.9
